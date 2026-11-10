@@ -1,0 +1,56 @@
+# Compiled Java class files
+*.class
+
+# Log files
+*.log
+
+# Maven build directory
+target/
+pom.xml.tagdir
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# SQLite Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Specific project database
+media_tracker.db
+media_tracker.db-journal
+
+# Visual Studio Code
+.vscode/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# Eclipse
+.classpath
+.project
+.settings/
+.metadata/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# --- Frontend & Local Environments ---
+.env
+.env.local
+node_modules/
+
+# --- Testing & Reports ---
+.sonar/
+.jacoco/
