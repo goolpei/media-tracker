@@ -8,7 +8,7 @@ import java.util.List;
 public class MediaDAO {
 
     public void insert(Media media) throws SQLException {
-        String sql = "INSERT INTO media(id, title, media_type, genre, rating, status, source_link, extra_info) VALUES(?,?,?,?,?,?,?,?)";
+        String sql = "INSERT INTO media(id, title, media_type, genre, rating, status, source_link, extra_info, boundary) VALUES(?,?,?,?,?,?,?,?,?)";
 
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -20,6 +20,7 @@ public class MediaDAO {
             pstmt.setString(6, media.getStatus());
             pstmt.setString(7, media.getSourceLink());
             pstmt.setString(8, media.getExtraInfo());
+            pstmt.setInt(9, media.getBoundary());
             pstmt.executeUpdate();
         }
     }
@@ -57,7 +58,7 @@ public class MediaDAO {
     }
 
     public void update(Media media) throws SQLException {
-        String sql = "UPDATE media SET title = ?, media_type = ?, genre = ?, rating = ?, status = ?, source_link = ?, extra_info = ? WHERE id = ?";
+        String sql = "UPDATE media SET title = ?, media_type = ?, genre = ?, rating = ?, status = ?, source_link = ?, extra_info = ?, boundary = ? WHERE id = ?";
 
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -68,7 +69,8 @@ public class MediaDAO {
             pstmt.setString(5, media.getStatus());
             pstmt.setString(6, media.getSourceLink());
             pstmt.setString(7, media.getExtraInfo());
-            pstmt.setString(8, media.getId());
+            pstmt.setInt(8, media.getBoundary());
+            pstmt.setString(9, media.getId());
             pstmt.executeUpdate();
         }
     }
@@ -97,12 +99,17 @@ public class MediaDAO {
             parsedExtra = Integer.parseInt(rs.getString("extra_info"));
         } catch (NumberFormatException ignored) {}
 
+        int boundary = 0;
+        try {
+            boundary = rs.getInt("boundary");
+        } catch (SQLException ignored) {}
+
         return switch (type) {
-            case "Anime" -> new Anime(id, title, genre, rating, status, sourceLink, parsedExtra);
-            case "Movie" -> new Movie(id, title, genre, rating, status, sourceLink, parsedExtra);
-            case "Book" -> new Book(id, title, genre, rating, status, sourceLink, parsedExtra);
-            case "Manga" -> new Manga(id, title, genre, rating, status, sourceLink, parsedExtra);
-            case "Manhwa" -> new Manhwa(id, title, genre, rating, status, sourceLink, parsedExtra);
+            case "Anime" -> new Anime(id, title, genre, rating, status, sourceLink, parsedExtra, boundary);
+            case "Movie" -> new Movie(id, title, genre, rating, status, sourceLink, parsedExtra, boundary);
+            case "Book" -> new Book(id, title, genre, rating, status, sourceLink, parsedExtra, boundary);
+            case "Manga" -> new Manga(id, title, genre, rating, status, sourceLink, parsedExtra, boundary);
+            case "Manhwa" -> new Manhwa(id, title, genre, rating, status, sourceLink, parsedExtra, boundary);
             default -> null;
         };
     }

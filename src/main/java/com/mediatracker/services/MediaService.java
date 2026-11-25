@@ -11,14 +11,28 @@ import java.io.PrintWriter;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.regex.Pattern;
 
 public class MediaService {
     private final MediaDAO mediaDAO;
     private final HistoryDAO historyDAO;
+    private final Deque<UndoAction> undoStack = new ArrayDeque<>();
+    private static final int MAX_UNDO_HISTORY = 20;
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final Pattern SEQUENTIAL_ID_PATTERN = Pattern.compile("^[A-Z]\\d{2}$");
+
+    private enum ActionType {
+        ADD,
+        EDIT,
+        PROGRESS,
+        DELETE
+    }
+
+    private record UndoAction(ActionType type, List<Media> snapshots, String description) {}
 
     public MediaService() {
         this.mediaDAO = new MediaDAO();
@@ -31,6 +45,57 @@ public class MediaService {
 
     public Media getMediaById(String id) throws SQLException {
         return mediaDAO.findById(id);
+    }
+
+    public boolean canUndo() {
+        return !undoStack.isEmpty();
+    }
+
+    public String getUndoDescription() {
+        UndoAction latest = undoStack.peek();
+        return latest != null ? "Undo: " + latest.description() : "Nothing to undo";
+    }
+
+    public void undoLastAction() throws SQLException {
+        UndoAction action = undoStack.poll();
+        if (action == null) {
+            throw new IllegalStateException("Nothing to undo.");
+        }
+
+        switch (action.type()) {
+            case ADD -> {
+                for (Media added : action.snapshots()) {
+                    if (mediaDAO.findById(added.getId()) != null) {
+                        mediaDAO.delete(added.getId());
+                        logActivity(added, "Undo: Removed added item");
+                    }
+                }
+            }
+            case EDIT -> {
+                for (Media previous : action.snapshots()) {
+                    if (mediaDAO.findById(previous.getId()) != null) {
+                        mediaDAO.update(previous);
+                        logActivity(previous, "Undo: Reverted edit");
+                    }
+                }
+            }
+            case PROGRESS -> {
+                for (Media previous : action.snapshots()) {
+                    if (mediaDAO.findById(previous.getId()) != null) {
+                        mediaDAO.update(previous);
+                        logActivity(previous, "Undo: Reverted progress (Back to " + formatMetric(previous) + ")");
+                    }
+                }
+            }
+            case DELETE -> {
+                for (Media deleted : action.snapshots()) {
+                    if (mediaDAO.findById(deleted.getId()) == null) {
+                        mediaDAO.insert(deleted);
+                        logActivity(deleted, "Undo: Restored deleted item");
+                    }
+                }
+            }
+        }
     }
 
     public String generateNextId() throws SQLException {
@@ -71,7 +136,12 @@ public class MediaService {
         }
 
         mediaDAO.insert(media);
-        logActivity(media, "Added (" + media.getStatus() + ")");
+        logActivity(media, "Added (" + media.getStatus() + " • " + formatMetric(media) + ")");
+        pushUndo(new UndoAction(
+            ActionType.ADD,
+            List.of(copyMedia(media)),
+            "Add '" + media.getTitle() + "'"
+        ));
     }
 
     public void updateMedia(Media updatedMedia) throws SQLException {
@@ -82,13 +152,20 @@ public class MediaService {
             throw new IllegalArgumentException("Cannot update: Media ID '" + updatedMedia.getId() + "' not found.");
         }
 
+        Media beforeSnapshot = copyMedia(existing);
         mediaDAO.update(updatedMedia);
 
         if (!existing.getStatus().equals(updatedMedia.getStatus())) {
             logActivity(updatedMedia, "Status changed to " + updatedMedia.getStatus());
         } else {
-            logActivity(updatedMedia, "Updated details");
+            logActivity(updatedMedia, "Updated details (" + formatMetric(updatedMedia) + ")");
         }
+
+        pushUndo(new UndoAction(
+            ActionType.EDIT,
+            List.of(beforeSnapshot),
+            "Edit '" + updatedMedia.getTitle() + "'"
+        ));
     }
 
     public void incrementProgress(String id) throws SQLException {
@@ -97,32 +174,89 @@ public class MediaService {
             throw new IllegalArgumentException("Media item not found.");
         }
 
-        String status = media.getStatus() != null ? media.getStatus().trim() : "";
-        if ("Finished".equalsIgnoreCase(status)) {
+        int[] result = incrementProgressBatch(List.of(id));
+        if (result[0] == 0 && result[1] > 0) {
             throw new IllegalStateException("Cannot increment progress: '" + media.getTitle() + "' is already Finished.");
         }
+    }
 
-        if (media instanceof Anime anime) {
-            anime.setEpisodes(anime.getEpisodes() + 1);
-        } else if (media instanceof Movie movie) {
-            movie.setDurationMinutes(movie.getDurationMinutes() + 1);
-        } else if (media instanceof Book book) {
-            book.setPages(book.getPages() + 1);
-        } else if (media instanceof Manga manga) {
-            manga.setChapters(manga.getChapters() + 1);
-        } else if (media instanceof Manhwa manhwa) {
-            manhwa.setChapters(manhwa.getChapters() + 1);
+    public int[] incrementProgressBatch(List<String> ids) throws SQLException {
+        int updatedCount = 0;
+        int skippedFinishedCount = 0;
+        List<Media> beforeSnapshots = new ArrayList<>();
+
+        for (String id : ids) {
+            Media media = mediaDAO.findById(id);
+            if (media == null) {
+                continue;
+            }
+
+            String status = media.getStatus() != null ? media.getStatus().trim() : "";
+            int boundary = media.getBoundary();
+            int current = media.getCurrentProgress();
+
+            if ("Finished".equalsIgnoreCase(status) || (boundary > 0 && current >= boundary)) {
+                skippedFinishedCount++;
+                continue;
+            }
+
+            beforeSnapshots.add(copyMedia(media));
+            applySingleIncrement(media, status);
+            mediaDAO.update(media);
+
+            String logMsg = "Finished".equalsIgnoreCase(media.getStatus())
+                ? "Progress +1 (" + formatMetric(media) + " — Finished)"
+                : "Progress +1 (Now at " + formatMetric(media) + ")";
+            logActivity(media, logMsg);
+            updatedCount++;
         }
 
-        if ("Unwatched".equalsIgnoreCase(status)
-                || "Unread".equalsIgnoreCase(status)
-                || "Unconsumed".equalsIgnoreCase(status)) {
-            boolean isReadingType = (media instanceof Book || media instanceof Manga || media instanceof Manhwa);
+        if (!beforeSnapshots.isEmpty()) {
+            String desc = beforeSnapshots.size() == 1
+                ? "+1 Progress on '" + beforeSnapshots.get(0).getTitle() + "'"
+                : "+1 Progress on " + beforeSnapshots.size() + " items";
+            pushUndo(new UndoAction(ActionType.PROGRESS, beforeSnapshots, desc));
+        }
+
+        return new int[]{updatedCount, skippedFinishedCount};
+    }
+
+    public void setCustomProgress(String id, int newProgress) throws SQLException {
+        Media media = mediaDAO.findById(id);
+        if (media == null) {
+            throw new IllegalArgumentException("Media item not found.");
+        }
+
+        if (newProgress < 0) {
+            throw new IllegalArgumentException("Progress cannot be negative.");
+        }
+
+        int boundary = media.getBoundary();
+        if (boundary > 0 && newProgress > boundary) {
+            throw new IllegalArgumentException(
+                "Progress (" + newProgress + ") cannot exceed the boundary (" + boundary + ")."
+            );
+        }
+
+        Media beforeSnapshot = copyMedia(media);
+        media.setCurrentProgress(newProgress);
+
+        boolean isReadingType = (media instanceof Book || media instanceof Manga || media instanceof Manhwa);
+        if (boundary > 0 && newProgress >= boundary) {
+            media.setStatus("Finished");
+        } else if (newProgress == 0) {
+            media.setStatus(isReadingType ? "Unread" : "Unwatched");
+        } else {
             media.setStatus(isReadingType ? "Currently Reading" : "Currently Watching");
         }
 
         mediaDAO.update(media);
-        logActivity(media, "Progress +1 (Now at " + formatMetric(media) + ")");
+        logActivity(media, "Set progress to " + formatMetric(media) + " (" + media.getStatus() + ")");
+        pushUndo(new UndoAction(
+            ActionType.PROGRESS,
+            List.of(beforeSnapshot),
+            "Set progress on '" + media.getTitle() + "'"
+        ));
     }
 
     public void launchMedia(String id) throws SQLException {
@@ -140,10 +274,26 @@ public class MediaService {
     }
 
     public void deleteMedia(String id) throws SQLException {
-        Media existing = mediaDAO.findById(id);
-        if (existing != null) {
-            mediaDAO.delete(id);
-            logActivity(existing, "Deleted from library");
+        deleteMediaBatch(List.of(id));
+    }
+
+    public void deleteMediaBatch(List<String> ids) throws SQLException {
+        List<Media> deletedSnapshots = new ArrayList<>();
+
+        for (String id : ids) {
+            Media existing = mediaDAO.findById(id);
+            if (existing != null) {
+                deletedSnapshots.add(copyMedia(existing));
+                mediaDAO.delete(id);
+                logActivity(existing, "Deleted from library");
+            }
+        }
+
+        if (!deletedSnapshots.isEmpty()) {
+            String desc = deletedSnapshots.size() == 1
+                ? "Delete '" + deletedSnapshots.get(0).getTitle() + "'"
+                : "Delete " + deletedSnapshots.size() + " items";
+            pushUndo(new UndoAction(ActionType.DELETE, deletedSnapshots, desc));
         }
     }
 
@@ -186,15 +336,63 @@ public class MediaService {
         }
     }
 
-    public String formatMetric(Media media) {
-        String raw = media.getExtraInfo();
+    public String getMetricUnit(Media media) {
         return switch (media.getMediaType()) {
-            case "Anime" -> raw + " eps";
-            case "Movie" -> raw + " mins";
-            case "Book" -> raw + " pages";
-            case "Manga", "Manhwa" -> raw + " chaps";
-            default -> raw;
+            case "Anime" -> "eps";
+            case "Movie" -> "mins";
+            case "Book" -> "pages";
+            case "Manga", "Manhwa" -> "chaps";
+            default -> "";
         };
+    }
+
+    public String formatMetric(Media media) {
+        int current = media.getCurrentProgress();
+        int boundary = media.getBoundary();
+        String numbers = boundary > 0 ? (current + " / " + boundary) : String.valueOf(current);
+        String unit = getMetricUnit(media);
+        return unit.isEmpty() ? numbers : numbers + " " + unit;
+    }
+
+    private void applySingleIncrement(Media media, String status) {
+        int nextProgress = media.getCurrentProgress() + 1;
+        int boundary = media.getBoundary();
+
+        if (boundary > 0 && nextProgress >= boundary) {
+            media.setCurrentProgress(boundary);
+            media.setStatus("Finished");
+            return;
+        }
+
+        media.setCurrentProgress(nextProgress);
+
+        if ("Unwatched".equalsIgnoreCase(status)
+                || "Unread".equalsIgnoreCase(status)
+                || "Unconsumed".equalsIgnoreCase(status)) {
+            boolean isReadingType = (media instanceof Book || media instanceof Manga || media instanceof Manhwa);
+            media.setStatus(isReadingType ? "Currently Reading" : "Currently Watching");
+        }
+    }
+
+    private Media copyMedia(Media m) {
+        int current = m.getCurrentProgress();
+        int boundary = m.getBoundary();
+
+        return switch (m.getMediaType()) {
+            case "Anime" -> new Anime(m.getId(), m.getTitle(), m.getGenre(), m.getRating(), m.getStatus(), m.getSourceLink(), current, boundary);
+            case "Movie" -> new Movie(m.getId(), m.getTitle(), m.getGenre(), m.getRating(), m.getStatus(), m.getSourceLink(), current, boundary);
+            case "Book" -> new Book(m.getId(), m.getTitle(), m.getGenre(), m.getRating(), m.getStatus(), m.getSourceLink(), current, boundary);
+            case "Manga" -> new Manga(m.getId(), m.getTitle(), m.getGenre(), m.getRating(), m.getStatus(), m.getSourceLink(), current, boundary);
+            case "Manhwa" -> new Manhwa(m.getId(), m.getTitle(), m.getGenre(), m.getRating(), m.getStatus(), m.getSourceLink(), current, boundary);
+            default -> throw new IllegalArgumentException("Unsupported media type: " + m.getMediaType());
+        };
+    }
+
+    private void pushUndo(UndoAction action) {
+        if (undoStack.size() >= MAX_UNDO_HISTORY) {
+            undoStack.removeLast();
+        }
+        undoStack.push(action);
     }
 
     private void logActivity(Media media, String action) throws SQLException {
@@ -222,13 +420,8 @@ public class MediaService {
         if (media.getRating() < 0.0 || media.getRating() > 10.0) {
             throw new IllegalArgumentException("Rating must be between 0.0 and 10.0.");
         }
-        try {
-            int extra = Integer.parseInt(media.getExtraInfo());
-            if (extra < 0) {
-                throw new IllegalArgumentException("Count cannot be negative.");
-            }
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Count must be a valid number.");
+        if (media.getCurrentProgress() < 0 || media.getBoundary() < 0) {
+            throw new IllegalArgumentException("Progress and boundary counts cannot be negative.");
         }
     }
 
