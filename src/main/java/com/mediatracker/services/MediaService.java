@@ -1,9 +1,5 @@
 package com.mediatracker.services;
 
-import com.mediatracker.database.HistoryDAO;
-import com.mediatracker.database.MediaDAO;
-import com.mediatracker.models.*;
-
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -16,6 +12,16 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.regex.Pattern;
+
+import com.mediatracker.database.HistoryDAO;
+import com.mediatracker.database.MediaDAO;
+import com.mediatracker.models.Anime;
+import com.mediatracker.models.Book;
+import com.mediatracker.models.HistoryLog;
+import com.mediatracker.models.Manga;
+import com.mediatracker.models.Manhwa;
+import com.mediatracker.models.Media;
+import com.mediatracker.models.Movie;
 
 public class MediaService {
     private final MediaDAO mediaDAO;
@@ -144,12 +150,20 @@ public class MediaService {
         ));
     }
 
-    public void updateMedia(Media updatedMedia) throws SQLException {
+public void updateMedia(Media updatedMedia) throws SQLException {
         validateMedia(updatedMedia);
 
         Media existing = mediaDAO.findById(updatedMedia.getId());
         if (existing == null) {
             throw new IllegalArgumentException("Cannot update: Media ID '" + updatedMedia.getId() + "' not found.");
+        }
+
+        if ("Finished".equalsIgnoreCase(existing.getStatus())
+                && "Finished".equalsIgnoreCase(updatedMedia.getStatus())
+                && updatedMedia.getBoundary() > existing.getBoundary()
+                && updatedMedia.getCurrentProgress() < updatedMedia.getBoundary()) {
+            boolean isReadingType = (updatedMedia instanceof Book || updatedMedia instanceof Manga || updatedMedia instanceof Manhwa);
+            updatedMedia.setStatus(isReadingType ? "Currently Reading" : "Currently Watching");
         }
 
         Media beforeSnapshot = copyMedia(existing);

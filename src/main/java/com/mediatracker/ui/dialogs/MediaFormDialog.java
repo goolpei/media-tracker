@@ -10,12 +10,14 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.sql.SQLException;
+import java.text.DecimalFormat;
 
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
+import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -23,6 +25,11 @@ import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.border.EmptyBorder;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DefaultFormatterFactory;
+import javax.swing.text.DocumentFilter;
+import javax.swing.text.NumberFormatter;
 
 import com.mediatracker.models.Anime;
 import com.mediatracker.models.Book;
@@ -38,6 +45,7 @@ public class MediaFormDialog extends JDialog {
     private final MediaService mediaService;
     private final Media existingMedia;
     private boolean saved = false;
+    private boolean isPopulating = false;
 
     private final JTextField idField;
     private final JComboBox<String> typeCombo;
@@ -81,8 +89,7 @@ public class MediaFormDialog extends JDialog {
         genreField.putClientProperty("JTextField.placeholderText", "e.g., Action, Fantasy");
 
         ratingSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 10.0, 0.1));
-        JSpinner.NumberEditor ratingEditor = new JSpinner.NumberEditor(ratingSpinner, "0.0");
-        ratingSpinner.setEditor(ratingEditor);
+        configureNumericSpinner(ratingSpinner, true);
 
         // Status starts disabled until a valid Media Type is selected
         statusCombo = new JComboBox<>(new String[]{"Select Media Type first"});
@@ -91,6 +98,7 @@ public class MediaFormDialog extends JDialog {
         extraLabel = new JLabel("Total Metric:");
         extraSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
         extraSpinner.setToolTipText("Set the total progress boundary (0 = unbounded)");
+        configureNumericSpinner(extraSpinner, false);
 
         sourceLinkField = new JTextField();
         sourceLinkField.putClientProperty("JTextField.placeholderText", "https://...");
@@ -105,8 +113,11 @@ public class MediaFormDialog extends JDialog {
         addFormRow(formPanel, gbc, 6, extraLabel, extraSpinner);
         addFormRow(formPanel, gbc, 7, "Source Link:", sourceLinkField);
 
-        // Dynamic Metric Label & Status Choices Switcher
+        // Dynamic Metric Label, Reset, & Status Choices Switcher
         typeCombo.addActionListener(e -> onMediaTypeChanged((String) typeCombo.getSelectedItem()));
+
+        // Auto-revert "Finished" status if total metric count is increased above current progress
+        extraSpinner.addChangeListener(e -> onBoundaryChanged());
 
         // Populate fields if editing an existing item, or preview the next generated ID when adding
         if (existingMedia != null) {
@@ -145,7 +156,52 @@ public class MediaFormDialog extends JDialog {
         return saved;
     }
 
+    private static void configureNumericSpinner(JSpinner spinner, boolean allowDecimal) {
+        DecimalFormat format = new DecimalFormat(allowDecimal ? "0.0" : "0");
+        format.setGroupingUsed(false);
+
+        String regex = allowDecimal ? "^\\d*(\\.\\d*)?$" : "^\\d*$";
+        DocumentFilter numericFilter = new DocumentFilter() {
+            @Override
+            public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
+                if (string == null) return;
+                String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String next = current.substring(0, offset) + string + current.substring(offset);
+                if (next.matches(regex)) {
+                    super.insertString(fb, offset, string, attr);
+                }
+            }
+
+            @Override
+            public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException {
+                String replacement = text == null ? "" : text;
+                String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String next = current.substring(0, offset) + replacement + current.substring(offset + length);
+                if (next.matches(regex)) {
+                    super.replace(fb, offset, length, text, attrs);
+                }
+            }
+        };
+
+        NumberFormatter formatter = new NumberFormatter(format) {
+            @Override
+            protected DocumentFilter getDocumentFilter() {
+                return numericFilter;
+            }
+        };
+        formatter.setValueClass(allowDecimal ? Double.class : Integer.class);
+        formatter.setAllowsInvalid(true);
+
+        JSpinner.DefaultEditor editor = (JSpinner.DefaultEditor) spinner.getEditor();
+        JFormattedTextField textField = editor.getTextField();
+        textField.setFormatterFactory(new DefaultFormatterFactory(formatter));
+    }
+
     private void onMediaTypeChanged(String mediaType) {
+        if (!isPopulating) {
+            extraSpinner.setValue(0);
+        }
+
         if (mediaType == null || SELECT_TYPE_PROMPT.equals(mediaType)) {
             extraLabel.setText("Total Metric:");
             statusCombo.setModel(new DefaultComboBoxModel<>(new String[]{"Select Media Type first"}));
@@ -171,25 +227,51 @@ public class MediaFormDialog extends JDialog {
         updateExtraLabel(mediaType);
     }
 
+    private void onBoundaryChanged() {
+        if (isPopulating || existingMedia == null) {
+            return;
+        }
+
+        String selectedType = (String) typeCombo.getSelectedItem();
+        if (selectedType == null || !selectedType.equals(existingMedia.getMediaType())) {
+            return;
+        }
+
+        String currentStatus = (String) statusCombo.getSelectedItem();
+        int newBoundary = ((Number) extraSpinner.getValue()).intValue();
+
+        if ("Finished".equalsIgnoreCase(currentStatus) && newBoundary > existingMedia.getCurrentProgress()) {
+            statusCombo.setSelectedItem(getInProgressStatus(selectedType));
+        }
+    }
+
     private void populateFields(Media media) {
-        idField.setText(media.getId());
-        idField.setEditable(false);
-        idField.setEnabled(false);
+        isPopulating = true;
+        try {
+            idField.setText(media.getId());
+            idField.setEditable(false);
+            idField.setEnabled(false);
 
-        typeCombo.setSelectedItem(media.getMediaType());
-        onMediaTypeChanged(media.getMediaType());
+            typeCombo.setSelectedItem(media.getMediaType());
+            onMediaTypeChanged(media.getMediaType());
 
-        titleField.setText(media.getTitle());
-        genreField.setText(media.getGenre() != null ? media.getGenre() : "");
-        ratingSpinner.setValue(media.getRating());
+            titleField.setText(media.getTitle());
+            genreField.setText(media.getGenre() != null ? media.getGenre() : "");
+            ratingSpinner.setValue(media.getRating());
 
-        String normalizedStatus = normalizeLegacyStatus(media.getMediaType(), media.getStatus());
-        statusCombo.setSelectedItem(normalizedStatus);
+            String normalizedStatus = normalizeLegacyStatus(media.getMediaType(), media.getStatus());
+            statusCombo.setSelectedItem(normalizedStatus);
 
-        sourceLinkField.setText(media.getSourceLink() != null ? media.getSourceLink() : "");
+            sourceLinkField.setText(media.getSourceLink() != null ? media.getSourceLink() : "");
+            extraSpinner.setValue(media.getBoundary());
+        } finally {
+            isPopulating = false;
+        }
+    }
 
-        int boundaryValue = media.getBoundary() > 0 ? media.getBoundary() : media.getCurrentProgress();
-        extraSpinner.setValue(boundaryValue);
+    private String getInProgressStatus(String mediaType) {
+        boolean isReadingType = "Book".equals(mediaType) || "Manga".equals(mediaType) || "Manhwa".equals(mediaType);
+        return isReadingType ? "Currently Reading" : "Currently Watching";
     }
 
     private String normalizeLegacyStatus(String mediaType, String status) {
@@ -216,6 +298,54 @@ public class MediaFormDialog extends JDialog {
         extraLabel.setText(label);
     }
 
+    private double parseRatingInput() {
+        String rawText = ((JSpinner.DefaultEditor) ratingSpinner.getEditor())
+                .getTextField()
+                .getText()
+                .trim();
+
+        if (rawText.isEmpty() || ".".equals(rawText)) {
+            return 0.0;
+        }
+
+        double parsed;
+        try {
+            parsed = Double.parseDouble(rawText);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Rating must be a valid number.");
+        }
+
+        if (parsed < 0.0 || parsed > 10.0) {
+            throw new IllegalArgumentException("Rating must be between 0.0 and 10.0.");
+        }
+
+        return parsed;
+    }
+
+    private int parseBoundaryInput() {
+        String rawText = ((JSpinner.DefaultEditor) extraSpinner.getEditor())
+                .getTextField()
+                .getText()
+                .trim();
+
+        if (rawText.isEmpty()) {
+            return 0;
+        }
+
+        int parsed;
+        try {
+            parsed = Integer.parseInt(rawText);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Total metric count must be a valid whole number.");
+        }
+
+        if (parsed < 0) {
+            throw new IllegalArgumentException("Total metric count cannot be negative.");
+        }
+
+        return parsed;
+    }
+
     private void handleSave() {
         try {
             String id = idField.getText().trim();
@@ -226,17 +356,22 @@ public class MediaFormDialog extends JDialog {
 
             String title = titleField.getText().trim();
             String genre = genreField.getText().trim();
-            double rating = ((Number) ratingSpinner.getValue()).doubleValue();
+            double rating = parseRatingInput();
+            int boundary = parseBoundaryInput();
             String status = (String) statusCombo.getSelectedItem();
-            int boundary = ((Number) extraSpinner.getValue()).intValue();
             String link = sourceLinkField.getText().trim();
 
             int currentProgress;
-            if (existingMedia == null) {
+            if (existingMedia == null || !existingMedia.getMediaType().equals(type)) {
                 currentProgress = "Finished".equalsIgnoreCase(status) ? boundary : 0;
             } else {
                 currentProgress = existingMedia.getCurrentProgress();
-                if ("Finished".equalsIgnoreCase(status) && boundary > 0) {
+
+                if ("Finished".equalsIgnoreCase(existingMedia.getStatus())
+                        && "Finished".equalsIgnoreCase(status)
+                        && boundary > currentProgress) {
+                    status = getInProgressStatus(type);
+                } else if ("Finished".equalsIgnoreCase(status) && boundary > 0) {
                     currentProgress = boundary;
                 } else if (boundary > 0 && currentProgress >= boundary) {
                     currentProgress = boundary;
