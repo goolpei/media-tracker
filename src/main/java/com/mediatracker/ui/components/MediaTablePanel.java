@@ -31,6 +31,7 @@ public class MediaTablePanel extends JPanel {
     private final DefaultTableModel tableModel;
     private final JTable mediaTable;
     private final TableRowSorter<DefaultTableModel> rowSorter;
+    private JButton editBtn;
 
     public MediaTablePanel(
             Consumer<String> onOpenLink,
@@ -134,6 +135,12 @@ public class MediaTablePanel extends JPanel {
         return (String) tableModel.getValueAt(modelRow, 0);
     }
 
+    public void applyTheme(boolean isDarkTheme) {
+        if (editBtn != null) {
+            editBtn.setForeground(isDarkTheme ? Color.WHITE : new Color(31, 41, 55));
+        }
+    }
+
     private JPanel createActionBar(
             Consumer<String> onOpenLink,
             Consumer<String> onIncrementProgress,
@@ -145,7 +152,7 @@ public class MediaTablePanel extends JPanel {
 
         JButton openLinkBtn = createActionBtn("Open Link", new Color(59, 130, 246), onOpenLink);
         JButton plusOneBtn = createActionBtn("+1 Progress", new Color(16, 185, 129), onIncrementProgress);
-        JButton editBtn = createActionBtn("Edit", new Color(107, 114, 128), onEditMedia);
+        editBtn = createActionBtn("Edit", Color.WHITE, onEditMedia);
         JButton deleteBtn = createActionBtn("Delete", new Color(239, 68, 68), onDeleteMedia);
 
         bar.add(openLinkBtn);
@@ -195,7 +202,7 @@ public class MediaTablePanel extends JPanel {
                 if (!isSelected) {
                     switch (status) {
                         case "Finished" -> setForeground(new Color(52, 211, 153));
-                        case "Currently Consuming" -> setForeground(new Color(96, 165, 250));
+                        case "Currently Watching", "Currently Reading", "Currently Consuming" -> setForeground(new Color(96, 165, 250));
                         default -> setForeground(new Color(251, 191, 36));
                     }
                 }

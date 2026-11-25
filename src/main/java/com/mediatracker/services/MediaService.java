@@ -12,11 +12,13 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.regex.Pattern;
 
 public class MediaService {
     private final MediaDAO mediaDAO;
     private final HistoryDAO historyDAO;
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final Pattern SEQUENTIAL_ID_PATTERN = Pattern.compile("^[A-Z]\\d{2}$");
 
     public MediaService() {
         this.mediaDAO = new MediaDAO();
@@ -31,7 +33,37 @@ public class MediaService {
         return mediaDAO.findById(id);
     }
 
+    public String generateNextId() throws SQLException {
+        int maxIndex = -1;
+
+        for (Media m : mediaDAO.findAll()) {
+            String existingId = m.getId();
+            if (existingId != null && SEQUENTIAL_ID_PATTERN.matcher(existingId).matches()) {
+                int letterOffset = existingId.charAt(0) - 'A';
+                int numberPart = Integer.parseInt(existingId.substring(1));
+                int currentIndex = (letterOffset * 100) + numberPart;
+                if (currentIndex > maxIndex) {
+                    maxIndex = currentIndex;
+                }
+            }
+        }
+
+        int nextIndex = maxIndex + 1;
+        if (nextIndex >= 26 * 100) {
+            throw new IllegalStateException("Maximum Media ID limit (Z99) has been reached.");
+        }
+
+        char nextLetter = (char) ('A' + (nextIndex / 100));
+        int nextNumber = nextIndex % 100;
+        return String.format("%c%02d", nextLetter, nextNumber);
+    }
+
     public void addMedia(Media media) throws SQLException {
+        if (media == null) {
+            throw new IllegalArgumentException("Media object cannot be null.");
+        }
+
+        media.setId(generateNextId());
         validateMedia(media);
 
         if (mediaDAO.findById(media.getId()) != null) {
@@ -65,6 +97,11 @@ public class MediaService {
             throw new IllegalArgumentException("Media item not found.");
         }
 
+        String status = media.getStatus() != null ? media.getStatus().trim() : "";
+        if ("Finished".equalsIgnoreCase(status)) {
+            throw new IllegalStateException("Cannot increment progress: '" + media.getTitle() + "' is already Finished.");
+        }
+
         if (media instanceof Anime anime) {
             anime.setEpisodes(anime.getEpisodes() + 1);
         } else if (media instanceof Movie movie) {
@@ -77,8 +114,11 @@ public class MediaService {
             manhwa.setChapters(manhwa.getChapters() + 1);
         }
 
-        if ("Unconsumed".equalsIgnoreCase(media.getStatus())) {
-            media.setStatus("Currently Consuming");
+        if ("Unwatched".equalsIgnoreCase(status)
+                || "Unread".equalsIgnoreCase(status)
+                || "Unconsumed".equalsIgnoreCase(status)) {
+            boolean isReadingType = (media instanceof Book || media instanceof Manga || media instanceof Manhwa);
+            media.setStatus(isReadingType ? "Currently Reading" : "Currently Watching");
         }
 
         mediaDAO.update(media);
