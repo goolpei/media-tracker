@@ -2,6 +2,7 @@ package com.mediatracker.database;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -22,7 +23,8 @@ public class DatabaseManager {
                 rating REAL,
                 status TEXT,
                 source_link TEXT,
-                extra_info TEXT
+                extra_info TEXT,
+                boundary INTEGER DEFAULT 0
             );
             """;
 
@@ -41,9 +43,38 @@ public class DatabaseManager {
              Statement stmt = conn.createStatement()) {
             stmt.execute(createMediaTable);
             stmt.execute(createHistoryTable);
+            migrateBoundaryColumn(stmt);
             System.out.println("SQLite media and history tables verified.");
         } catch (SQLException e) {
             System.err.println("Database initialization failed: " + e.getMessage());
+        }
+    }
+
+    private static void migrateBoundaryColumn(Statement stmt) throws SQLException {
+        boolean hasBoundaryColumn = false;
+        try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(media);")) {
+            while (rs.next()) {
+                if ("boundary".equalsIgnoreCase(rs.getString("name"))) {
+                    hasBoundaryColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasBoundaryColumn) {
+            stmt.execute("ALTER TABLE media ADD COLUMN boundary INTEGER DEFAULT 0;");
+            stmt.execute("""
+                UPDATE media
+                SET boundary = CAST(extra_info AS INTEGER)
+                WHERE CAST(extra_info AS INTEGER) > 0;
+                """);
+            stmt.execute("""
+                UPDATE media
+                SET extra_info = '0'
+                WHERE LOWER(TRIM(status)) IN ('unwatched', 'unread', 'unconsumed')
+                  AND boundary > 0;
+                """);
+            System.out.println("Migrated existing media records to progress/boundary schema.");
         }
     }
 }

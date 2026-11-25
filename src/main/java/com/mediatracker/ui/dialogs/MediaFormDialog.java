@@ -88,8 +88,9 @@ public class MediaFormDialog extends JDialog {
         statusCombo = new JComboBox<>(new String[]{"Select Media Type first"});
         statusCombo.setEnabled(false);
 
-        extraLabel = new JLabel("Metric:");
+        extraLabel = new JLabel("Total Metric:");
         extraSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
+        extraSpinner.setToolTipText("Set the total progress boundary (0 = unbounded)");
 
         sourceLinkField = new JTextField();
         sourceLinkField.putClientProperty("JTextField.placeholderText", "https://...");
@@ -146,7 +147,7 @@ public class MediaFormDialog extends JDialog {
 
     private void onMediaTypeChanged(String mediaType) {
         if (mediaType == null || SELECT_TYPE_PROMPT.equals(mediaType)) {
-            extraLabel.setText("Metric:");
+            extraLabel.setText("Total Metric:");
             statusCombo.setModel(new DefaultComboBoxModel<>(new String[]{"Select Media Type first"}));
             statusCombo.setEnabled(false);
             return;
@@ -187,11 +188,8 @@ public class MediaFormDialog extends JDialog {
 
         sourceLinkField.setText(media.getSourceLink() != null ? media.getSourceLink() : "");
 
-        try {
-            extraSpinner.setValue(Integer.parseInt(media.getExtraInfo()));
-        } catch (NumberFormatException ignored) {
-            extraSpinner.setValue(0);
-        }
+        int boundaryValue = media.getBoundary() > 0 ? media.getBoundary() : media.getCurrentProgress();
+        extraSpinner.setValue(boundaryValue);
     }
 
     private String normalizeLegacyStatus(String mediaType, String status) {
@@ -209,11 +207,11 @@ public class MediaFormDialog extends JDialog {
 
     private void updateExtraLabel(String mediaType) {
         String label = switch (mediaType) {
-            case "Anime" -> "Episodes:";
-            case "Movie" -> "Duration (Minutes):";
-            case "Book" -> "Pages:";
-            case "Manga", "Manhwa" -> "Chapters:";
-            default -> "Metric:";
+            case "Anime" -> "Total Episodes:";
+            case "Movie" -> "Total Minutes:";
+            case "Book" -> "Total Pages:";
+            case "Manga", "Manhwa" -> "Total Chapters:";
+            default -> "Total Metric:";
         };
         extraLabel.setText(label);
     }
@@ -230,15 +228,28 @@ public class MediaFormDialog extends JDialog {
             String genre = genreField.getText().trim();
             double rating = ((Number) ratingSpinner.getValue()).doubleValue();
             String status = (String) statusCombo.getSelectedItem();
-            int extraCount = ((Number) extraSpinner.getValue()).intValue();
+            int boundary = ((Number) extraSpinner.getValue()).intValue();
             String link = sourceLinkField.getText().trim();
 
+            int currentProgress;
+            if (existingMedia == null) {
+                currentProgress = "Finished".equalsIgnoreCase(status) ? boundary : 0;
+            } else {
+                currentProgress = existingMedia.getCurrentProgress();
+                if ("Finished".equalsIgnoreCase(status) && boundary > 0) {
+                    currentProgress = boundary;
+                } else if (boundary > 0 && currentProgress >= boundary) {
+                    currentProgress = boundary;
+                    status = "Finished";
+                }
+            }
+
             Media media = switch (type) {
-                case "Anime" -> new Anime(id, title, genre, rating, status, link, extraCount);
-                case "Movie" -> new Movie(id, title, genre, rating, status, link, extraCount);
-                case "Book" -> new Book(id, title, genre, rating, status, link, extraCount);
-                case "Manga" -> new Manga(id, title, genre, rating, status, link, extraCount);
-                case "Manhwa" -> new Manhwa(id, title, genre, rating, status, link, extraCount);
+                case "Anime" -> new Anime(id, title, genre, rating, status, link, currentProgress, boundary);
+                case "Movie" -> new Movie(id, title, genre, rating, status, link, currentProgress, boundary);
+                case "Book" -> new Book(id, title, genre, rating, status, link, currentProgress, boundary);
+                case "Manga" -> new Manga(id, title, genre, rating, status, link, currentProgress, boundary);
+                case "Manhwa" -> new Manhwa(id, title, genre, rating, status, link, currentProgress, boundary);
                 default -> throw new IllegalArgumentException("Unsupported media type.");
             };
 
@@ -267,12 +278,12 @@ public class MediaFormDialog extends JDialog {
     private void addFormRow(JPanel panel, GridBagConstraints gbc, int row, JLabel label, JComponent field) {
         gbc.gridy = row;
         gbc.gridx = 0;
-        gbc.weightx = 0.32;
+        gbc.weightx = 0.34;
         label.setFont(new Font("Segoe UI", Font.BOLD, 12));
         panel.add(label, gbc);
 
         gbc.gridx = 1;
-        gbc.weightx = 0.68;
+        gbc.weightx = 0.66;
         field.setPreferredSize(new Dimension(220, 32));
         panel.add(field, gbc);
     }
