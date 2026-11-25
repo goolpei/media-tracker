@@ -13,7 +13,13 @@ public abstract class Media implements Consumable, Redirectable {
         this.title = title;
         this.genre = genre;
         this.rating = rating;
-        this.status = (status != null && !status.isEmpty()) ? status : "Unconsumed";
+        if (status != null && !status.isEmpty()) {
+            this.status = status;
+        } else {
+            this.status = (this instanceof Book || this instanceof Manga || this instanceof Manhwa)
+                    ? "Unread"
+                    : "Unwatched";
+        }
         this.sourceLink = sourceLink;
     }
 

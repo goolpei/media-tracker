@@ -115,9 +115,11 @@ public class MainFrame extends JFrame {
             historyPanel.setHistoryLogs(logs);
 
             int total = mediaService.getTotalCount();
-            long consuming = mediaService.getCountByStatus("Currently Consuming");
+            long inProgress = mediaService.getCountByStatus("Currently Watching")
+                            + mediaService.getCountByStatus("Currently Reading")
+                            + mediaService.getCountByStatus("Currently Consuming");
             long finished = mediaService.getCountByStatus("Finished");
-            statsPanel.updateStats(total, consuming, finished);
+            statsPanel.updateStats(total, inProgress, finished);
         } catch (SQLException e) {
             showError("Database Error", "Failed to load dashboard data: " + e.getMessage());
         }
@@ -262,6 +264,7 @@ public class MainFrame extends JFrame {
             workspacePanel.setBackground(isDarkTheme ? new Color(18, 18, 20) : new Color(249, 250, 251));
             sidebarPanel.applyTheme(isDarkTheme);
             statsPanel.applyTheme(isDarkTheme);
+            mediaTablePanel.applyTheme(isDarkTheme);
             historyPanel.applyTheme(isDarkTheme);
             headerPanel.updateThemeButtonText(isDarkTheme);
         } catch (Exception e) {

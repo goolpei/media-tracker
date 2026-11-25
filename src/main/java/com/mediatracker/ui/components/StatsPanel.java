@@ -30,7 +30,7 @@ public class StatsPanel extends JPanel {
         finishedValueLabel = createValueLabel(new Color(16, 185, 129));
 
         add(createStatCard("TOTAL TRACKED", totalValueLabel, new Color(99, 102, 241)));
-        add(createStatCard("CURRENTLY CONSUMING", consumingValueLabel, new Color(59, 130, 246)));
+        add(createStatCard("WATCHING / READING", consumingValueLabel, new Color(59, 130, 246)));
         add(createStatCard("FINISHED", finishedValueLabel, new Color(16, 185, 129)));
 
         applyTheme(true);

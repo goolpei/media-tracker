@@ -9,7 +9,9 @@ import java.awt.Frame;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.sql.SQLException;
 
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -31,6 +33,8 @@ import com.mediatracker.models.Movie;
 import com.mediatracker.services.MediaService;
 
 public class MediaFormDialog extends JDialog {
+    private static final String SELECT_TYPE_PROMPT = "-- Select Media Type --";
+
     private final MediaService mediaService;
     private final Media existingMedia;
     private boolean saved = false;
@@ -61,11 +65,13 @@ public class MediaFormDialog extends JDialog {
         gbc.insets = new Insets(6, 6, 6, 6);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // Initialize Form Inputs
+        // Initialize Form Inputs (Media ID is strictly computer-generated and read-only)
         idField = new JTextField();
-        idField.putClientProperty("JTextField.placeholderText", "e.g., A01, B02");
+        idField.setEditable(false);
+        idField.setEnabled(false);
+        idField.setToolTipText("Auto-generated sequential ID");
 
-        String[] types = {"Anime", "Movie", "Book", "Manga", "Manhwa"};
+        String[] types = {SELECT_TYPE_PROMPT, "Anime", "Movie", "Book", "Manga", "Manhwa"};
         typeCombo = new JComboBox<>(types);
 
         titleField = new JTextField();
@@ -78,16 +84,17 @@ public class MediaFormDialog extends JDialog {
         JSpinner.NumberEditor ratingEditor = new JSpinner.NumberEditor(ratingSpinner, "0.0");
         ratingSpinner.setEditor(ratingEditor);
 
-        String[] statuses = {"Unconsumed", "Currently Consuming", "Finished"};
-        statusCombo = new JComboBox<>(statuses);
+        // Status starts disabled until a valid Media Type is selected
+        statusCombo = new JComboBox<>(new String[]{"Select Media Type first"});
+        statusCombo.setEnabled(false);
 
-        extraLabel = new JLabel("Episodes:");
+        extraLabel = new JLabel("Metric:");
         extraSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 1));
 
         sourceLinkField = new JTextField();
         sourceLinkField.putClientProperty("JTextField.placeholderText", "https://...");
 
-        // Row 0: ID & Media Type
+        // Form Rows
         addFormRow(formPanel, gbc, 0, "Media ID:", idField);
         addFormRow(formPanel, gbc, 1, "Media Type:", typeCombo);
         addFormRow(formPanel, gbc, 2, "Title:", titleField);
@@ -97,12 +104,18 @@ public class MediaFormDialog extends JDialog {
         addFormRow(formPanel, gbc, 6, extraLabel, extraSpinner);
         addFormRow(formPanel, gbc, 7, "Source Link:", sourceLinkField);
 
-        // Dynamic Metric Label Switcher
-        typeCombo.addActionListener(e -> updateExtraLabel((String) typeCombo.getSelectedItem()));
+        // Dynamic Metric Label & Status Choices Switcher
+        typeCombo.addActionListener(e -> onMediaTypeChanged((String) typeCombo.getSelectedItem()));
 
-        // Populate fields if editing an existing item
+        // Populate fields if editing an existing item, or preview the next generated ID when adding
         if (existingMedia != null) {
             populateFields(existingMedia);
+        } else {
+            try {
+                idField.setText(mediaService.generateNextId());
+            } catch (SQLException e) {
+                idField.setText("Auto-generated");
+            }
         }
 
         // Bottom Button Bar
@@ -131,14 +144,47 @@ public class MediaFormDialog extends JDialog {
         return saved;
     }
 
+    private void onMediaTypeChanged(String mediaType) {
+        if (mediaType == null || SELECT_TYPE_PROMPT.equals(mediaType)) {
+            extraLabel.setText("Metric:");
+            statusCombo.setModel(new DefaultComboBoxModel<>(new String[]{"Select Media Type first"}));
+            statusCombo.setEnabled(false);
+            return;
+        }
+
+        boolean wasEnabled = statusCombo.isEnabled();
+        int previousIndex = wasEnabled ? statusCombo.getSelectedIndex() : 0;
+
+        String[] statusOptions = switch (mediaType) {
+            case "Anime", "Movie" -> new String[]{"Unwatched", "Currently Watching", "Finished"};
+            case "Book", "Manga", "Manhwa" -> new String[]{"Unread", "Currently Reading", "Finished"};
+            default -> new String[]{"Unwatched", "Currently Watching", "Finished"};
+        };
+
+        statusCombo.setModel(new DefaultComboBoxModel<>(statusOptions));
+        if (previousIndex >= 0 && previousIndex < statusOptions.length) {
+            statusCombo.setSelectedIndex(previousIndex);
+        }
+        statusCombo.setEnabled(true);
+
+        updateExtraLabel(mediaType);
+    }
+
     private void populateFields(Media media) {
         idField.setText(media.getId());
-        idField.setEnabled(false); // Prevent changing primary key on edit
+        idField.setEditable(false);
+        idField.setEnabled(false);
+
         typeCombo.setSelectedItem(media.getMediaType());
+        onMediaTypeChanged(media.getMediaType());
+
         titleField.setText(media.getTitle());
         genreField.setText(media.getGenre() != null ? media.getGenre() : "");
         ratingSpinner.setValue(media.getRating());
-        statusCombo.setSelectedItem(media.getStatus());
+
+        String normalizedStatus = normalizeLegacyStatus(media.getMediaType(), media.getStatus());
+        statusCombo.setSelectedItem(normalizedStatus);
+
         sourceLinkField.setText(media.getSourceLink() != null ? media.getSourceLink() : "");
 
         try {
@@ -146,8 +192,19 @@ public class MediaFormDialog extends JDialog {
         } catch (NumberFormatException ignored) {
             extraSpinner.setValue(0);
         }
+    }
 
-        updateExtraLabel(media.getMediaType());
+    private String normalizeLegacyStatus(String mediaType, String status) {
+        if (status == null) return "Finished";
+        boolean isReadingType = "Book".equals(mediaType) || "Manga".equals(mediaType) || "Manhwa".equals(mediaType);
+
+        if ("Unconsumed".equalsIgnoreCase(status.trim())) {
+            return isReadingType ? "Unread" : "Unwatched";
+        }
+        if ("Currently Consuming".equalsIgnoreCase(status.trim())) {
+            return isReadingType ? "Currently Reading" : "Currently Watching";
+        }
+        return status;
     }
 
     private void updateExtraLabel(String mediaType) {
@@ -156,7 +213,7 @@ public class MediaFormDialog extends JDialog {
             case "Movie" -> "Duration (Minutes):";
             case "Book" -> "Pages:";
             case "Manga", "Manhwa" -> "Chapters:";
-            default -> "Count:";
+            default -> "Metric:";
         };
         extraLabel.setText(label);
     }
@@ -165,6 +222,10 @@ public class MediaFormDialog extends JDialog {
         try {
             String id = idField.getText().trim();
             String type = (String) typeCombo.getSelectedItem();
+            if (type == null || SELECT_TYPE_PROMPT.equals(type)) {
+                throw new IllegalArgumentException("Please select a Media Type first.");
+            }
+
             String title = titleField.getText().trim();
             String genre = genreField.getText().trim();
             double rating = ((Number) ratingSpinner.getValue()).doubleValue();

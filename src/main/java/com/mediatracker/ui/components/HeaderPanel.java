@@ -45,7 +45,14 @@ public class HeaderPanel extends JPanel {
             @Override public void changedUpdate(DocumentEvent e) { onFilterChanged.run(); }
         });
 
-        String[] statuses = {"All Statuses", "Unconsumed", "Currently Consuming", "Finished"};
+        String[] statuses = {
+            "All Statuses",
+            "Unwatched",
+            "Currently Watching",
+            "Unread",
+            "Currently Reading",
+            "Finished"
+        };
         statusFilterCombo = new JComboBox<>(statuses);
         statusFilterCombo.setPreferredSize(new Dimension(170, 34));
         statusFilterCombo.addActionListener(e -> onFilterChanged.run());
