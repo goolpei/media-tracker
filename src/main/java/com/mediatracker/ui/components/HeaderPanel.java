@@ -30,14 +30,14 @@ public class HeaderPanel extends JPanel {
         setBorder(new EmptyBorder(12, 20, 12, 20));
         setOpaque(false);
 
-        // Left: Search bar + Status filter
-        JPanel filterGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        // Center-Left: Flexible Search bar + Status filter
+        JPanel filterGroup = new JPanel(new BorderLayout(10, 0));
         filterGroup.setOpaque(false);
 
-        searchField = new JTextField(22);
+        searchField = new JTextField();
         searchField.putClientProperty("JTextField.placeholderText", "Search by title, ID, or genre...");
         searchField.putClientProperty("JTextField.showClearButton", true);
-        searchField.setPreferredSize(new Dimension(240, 34));
+        searchField.setPreferredSize(new Dimension(220, 34));
 
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e) { onFilterChanged.run(); }
@@ -54,11 +54,11 @@ public class HeaderPanel extends JPanel {
             "Finished"
         };
         statusFilterCombo = new JComboBox<>(statuses);
-        statusFilterCombo.setPreferredSize(new Dimension(170, 34));
+        statusFilterCombo.setPreferredSize(new Dimension(175, 34));
         statusFilterCombo.addActionListener(e -> onFilterChanged.run());
 
-        filterGroup.add(searchField);
-        filterGroup.add(statusFilterCombo);
+        filterGroup.add(searchField, BorderLayout.CENTER);
+        filterGroup.add(statusFilterCombo, BorderLayout.EAST);
 
         // Right: Theme Toggle, Export CSV, and Add Media buttons
         JPanel actionGroup = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -91,7 +91,7 @@ public class HeaderPanel extends JPanel {
         actionGroup.add(exportCsvBtn);
         actionGroup.add(addButton);
 
-        add(filterGroup, BorderLayout.WEST);
+        add(filterGroup, BorderLayout.CENTER);
         add(actionGroup, BorderLayout.EAST);
     }
 

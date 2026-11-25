@@ -4,12 +4,15 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.Path2D;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -31,6 +34,8 @@ import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
@@ -42,10 +47,18 @@ public class MediaTablePanel extends JPanel {
     private final DefaultTableModel tableModel;
     private final JTable mediaTable;
     private final TableRowSorter<DefaultTableModel> rowSorter;
+    private final JScrollPane scrollPane;
+
     private JCheckBox selectAllCheckBox;
+    private JButton openLinkBtn;
+    private JButton progressMainBtn;
+    private JButton progressDropBtn;
     private JButton editBtn;
+    private JButton deleteBtn;
     private JButton undoBtn;
+
     private boolean isUpdatingSelection = false;
+    private boolean isDarkTheme = true;
 
     public MediaTablePanel(
             Consumer<String> onOpenLink,
@@ -75,8 +88,11 @@ public class MediaTablePanel extends JPanel {
         };
 
         mediaTable = new JTable(tableModel);
-        mediaTable.setRowHeight(36);
+        mediaTable.setRowHeight(38);
         mediaTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        mediaTable.setShowHorizontalLines(true);
+        mediaTable.setShowVerticalLines(false);
+        mediaTable.setIntercellSpacing(new Dimension(0, 1));
         mediaTable.getTableHeader().setReorderingAllowed(false);
         mediaTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
         mediaTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
@@ -93,7 +109,7 @@ public class MediaTablePanel extends JPanel {
         mediaTable.getColumnModel().getColumn(7).setPreferredWidth(105);
         mediaTable.getColumnModel().getColumn(8).setPreferredWidth(75);
 
-        // Apply custom cell renderers for Rating, Status, and Link
+        // Apply custom cell renderers for Title, Rating, Status, and Link
         applyCustomRenderers();
 
         // Attach TableRowSorter for instant filtering & column sorting
@@ -101,15 +117,38 @@ public class MediaTablePanel extends JPanel {
         rowSorter.setSortable(0, false);
         mediaTable.setRowSorter(rowSorter);
 
-        // Keep Select All checkbox synchronized when individual checkboxes are toggled
-        tableModel.addTableModelListener(e -> {
-            if (!isUpdatingSelection && (e.getColumn() == 0 || e.getColumn() == -1)) {
-                syncSelectAllState();
+        // Double-click any non-checkbox cell to edit the media item directly
+        mediaTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    int viewRow = mediaTable.rowAtPoint(e.getPoint());
+                    int viewCol = mediaTable.columnAtPoint(e.getPoint());
+                    if (viewRow >= 0 && viewCol > 0) {
+                        int modelRow = mediaTable.convertRowIndexToModel(viewRow);
+                        String id = (String) tableModel.getValueAt(modelRow, 1);
+                        onEditMedia.accept(id);
+                    }
+                }
             }
         });
 
-        JScrollPane scrollPane = new JScrollPane(mediaTable);
-        scrollPane.setBorder(BorderFactory.createLineBorder(new Color(46, 46, 56)));
+        // Update footer buttons when row highlights change
+        mediaTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                updateActionButtonsState();
+            }
+        });
+
+        // Keep Select All checkbox & footer buttons synchronized when checkboxes are toggled
+        tableModel.addTableModelListener(e -> {
+            if (!isUpdatingSelection && (e.getColumn() == 0 || e.getColumn() == -1)) {
+                syncSelectAllState();
+                updateActionButtonsState();
+            }
+        });
+
+        scrollPane = new JScrollPane(mediaTable);
 
         // Bottom Action Bar with Select All + Action Buttons
         JPanel actionBar = createActionBar(
@@ -123,6 +162,9 @@ public class MediaTablePanel extends JPanel {
 
         add(scrollPane, BorderLayout.CENTER);
         add(actionBar, BorderLayout.SOUTH);
+
+        applyTheme(true);
+        updateActionButtonsState();
     }
 
     public void setMediaList(List<Media> mediaList, Function<Media, String> metricFormatter) {
@@ -149,6 +191,7 @@ public class MediaTablePanel extends JPanel {
             isUpdatingSelection = false;
         }
         syncSelectAllState();
+        updateActionButtonsState();
     }
 
     public void applyFilters(String category, String status, String searchQuery) {
@@ -171,6 +214,7 @@ public class MediaTablePanel extends JPanel {
 
         rowSorter.setRowFilter(filters.isEmpty() ? null : RowFilter.andFilter(filters));
         syncSelectAllState();
+        updateActionButtonsState();
     }
 
     public List<String> getSelectedMediaIds() {
@@ -193,13 +237,67 @@ public class MediaTablePanel extends JPanel {
         }
     }
 
-    public void applyTheme(boolean isDarkTheme) {
+public void applyTheme(boolean isDarkTheme) {
+        this.isDarkTheme = isDarkTheme;
+
+        UIManager.put("Table.alternateRowColor", isDarkTheme ? new Color(50, 52, 56) : new Color(248, 250, 252));
+        mediaTable.setGridColor(isDarkTheme ? new Color(68, 71, 75) : new Color(229, 231, 235));
+        scrollPane.setBorder(BorderFactory.createLineBorder(isDarkTheme ? new Color(46, 46, 56) : new Color(229, 231, 235)));
+
         if (editBtn != null) {
             editBtn.setForeground(isDarkTheme ? Color.WHITE : new Color(31, 41, 55));
         }
         if (selectAllCheckBox != null) {
             selectAllCheckBox.setForeground(isDarkTheme ? new Color(229, 231, 235) : new Color(31, 41, 55));
         }
+
+        mediaTable.repaint();
+    }
+    
+    private void updateActionButtonsState() {
+        if (openLinkBtn == null) return;
+
+        List<String> selectedIds = getSelectedMediaIds();
+        int count = selectedIds.size();
+        boolean hasAny = count > 0;
+        boolean hasSingle = count == 1;
+
+        progressMainBtn.setEnabled(hasAny);
+        progressDropBtn.setEnabled(hasAny);
+        deleteBtn.setEnabled(hasAny);
+        editBtn.setEnabled(hasSingle);
+
+        progressMainBtn.setToolTipText(hasAny
+            ? "Add +1 progress to selected item(s)"
+            : "Select one or more items to update progress");
+        editBtn.setToolTipText(hasSingle
+            ? "Edit selected media item (or double-click row)"
+            : (count > 1 ? "Select only one item to edit" : "Select a media item to edit"));
+        deleteBtn.setToolTipText(hasAny
+            ? "Delete selected item(s)"
+            : "Select one or more items to delete");
+
+        if (hasSingle) {
+            boolean linkAvailable = hasAvailableLink(selectedIds.get(0));
+            openLinkBtn.setEnabled(linkAvailable);
+            openLinkBtn.setToolTipText(linkAvailable
+                ? "Open source link in browser"
+                : "No source link saved for this item");
+        } else {
+            openLinkBtn.setEnabled(false);
+            openLinkBtn.setToolTipText(count > 1
+                ? "Select only one item to open its link"
+                : "Select a media item to open its link");
+        }
+    }
+
+    private boolean hasAvailableLink(String mediaId) {
+        for (int row = 0; row < tableModel.getRowCount(); row++) {
+            if (mediaId.equals(tableModel.getValueAt(row, 1))) {
+                return "Available".equals(tableModel.getValueAt(row, 8));
+            }
+        }
+        return false;
     }
 
     private Set<String> getCheckedMediaIds() {
@@ -272,6 +370,7 @@ public class MediaTablePanel extends JPanel {
                 isUpdatingSelection = false;
             }
             syncSelectAllState();
+            updateActionButtonsState();
         });
         leftPanel.add(selectAllCheckBox);
 
@@ -279,10 +378,10 @@ public class MediaTablePanel extends JPanel {
         JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
         rightPanel.setOpaque(false);
 
-        JButton openLinkBtn = createSingleActionBtn("Open Link", new Color(59, 130, 246), "open its link", onOpenLink);
+        openLinkBtn = createSingleActionBtn("Open Link", new Color(59, 130, 246), "open its link", onOpenLink);
         JPanel progressSplitBtn = createProgressSplitButton(onIncrementProgress, onCustomProgress);
         editBtn = createSingleActionBtn("Edit", Color.WHITE, "edit", onEditMedia);
-        JButton deleteBtn = createBatchActionBtn("Delete", new Color(239, 68, 68), onDeleteMedia);
+        deleteBtn = createBatchActionBtn("Delete", new Color(239, 68, 68), onDeleteMedia);
 
         undoBtn = new JButton("Undo");
         undoBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
@@ -313,14 +412,14 @@ public class MediaTablePanel extends JPanel {
         JPanel splitContainer = new JPanel(new BorderLayout(0, 0));
         splitContainer.setOpaque(false);
 
-        JButton mainBtn = new JButton("+ Progress");
-        mainBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        mainBtn.setForeground(emerald);
-        mainBtn.setFocusPainted(false);
-        mainBtn.setMargin(new Insets(4, 12, 4, 10));
-        mainBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        mainBtn.setToolTipText("Add +1 progress to selected item(s)");
-        mainBtn.addActionListener(e -> {
+        progressMainBtn = new JButton("+ Progress");
+        progressMainBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        progressMainBtn.setForeground(emerald);
+        progressMainBtn.setFocusPainted(false);
+        progressMainBtn.setMargin(new Insets(4, 12, 4, 10));
+        progressMainBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        progressMainBtn.setToolTipText("Add +1 progress to selected item(s)");
+        progressMainBtn.addActionListener(e -> {
             List<String> selectedIds = getSelectedMediaIds();
             if (selectedIds.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "Please select at least one media item from the table first.", "No Selection", JOptionPane.INFORMATION_MESSAGE);
@@ -329,11 +428,11 @@ public class MediaTablePanel extends JPanel {
             onIncrementProgress.accept(selectedIds);
         });
 
-        JButton dropBtn = new JButton(createDownArrowIcon(emerald));
-        dropBtn.setFocusPainted(false);
-        dropBtn.setMargin(new Insets(4, 8, 4, 8));
-        dropBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        dropBtn.setToolTipText("More progress options");
+        progressDropBtn = new JButton(createDownArrowIcon(emerald));
+        progressDropBtn.setFocusPainted(false);
+        progressDropBtn.setMargin(new Insets(4, 8, 4, 8));
+        progressDropBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        progressDropBtn.setToolTipText("More progress options");
 
         JPopupMenu popupMenu = new JPopupMenu();
 
@@ -367,10 +466,10 @@ public class MediaTablePanel extends JPanel {
         popupMenu.addSeparator();
         popupMenu.add(customProgressItem);
 
-        dropBtn.addActionListener(e -> popupMenu.show(dropBtn, 0, dropBtn.getHeight()));
+        progressDropBtn.addActionListener(e -> popupMenu.show(progressDropBtn, 0, progressDropBtn.getHeight()));
 
-        splitContainer.add(mainBtn, BorderLayout.CENTER);
-        splitContainer.add(dropBtn, BorderLayout.EAST);
+        splitContainer.add(progressMainBtn, BorderLayout.CENTER);
+        splitContainer.add(progressDropBtn, BorderLayout.EAST);
         return splitContainer;
     }
 
@@ -413,10 +512,25 @@ public class MediaTablePanel extends JPanel {
     }
 
     private void applyCustomRenderers() {
-        final Icon goldStarIcon = createStarIcon(new Color(251, 191, 36));
+        final Icon goldStarIcon = createStarIcon(new Color(245, 158, 11));
         final Icon whiteStarIcon = createStarIcon(Color.WHITE);
 
-        // Rating Renderer (Column 5)
+        // Title Renderer (Column 2: Bold to anchor each row)
+        mediaTable.getColumnModel().getColumn(2).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                setFont(getFont().deriveFont(Font.BOLD));
+                if (isSelected) {
+                    setForeground(table.getSelectionForeground());
+                } else {
+                    setForeground(isDarkTheme ? new Color(243, 244, 246) : new Color(17, 24, 39));
+                }
+                return this;
+            }
+        });
+
+        // Rating Renderer (Column 5: Gold star when rated, muted gray dash when unrated)
         mediaTable.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
@@ -426,27 +540,31 @@ public class MediaTablePanel extends JPanel {
                         setText(String.format("%.1f", rating));
                         setIcon(isSelected ? whiteStarIcon : goldStarIcon);
                         setIconTextGap(5);
+                        setForeground(isSelected ? table.getSelectionForeground() : new Color(245, 158, 11));
                     } else {
                         setText("-");
                         setIcon(null);
+                        setForeground(isSelected ? table.getSelectionForeground() : new Color(107, 114, 128));
                     }
-                    if (!isSelected) setForeground(new Color(251, 191, 36));
                 }
                 return this;
             }
         });
 
-        // Status Color Renderer (Column 6)
+        // Status Color Renderer (Column 6: Consistent selection foreground across themes)
         mediaTable.getColumnModel().getColumn(6).setCellRenderer(new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
                 String status = value != null ? value.toString() : "";
-                if (!isSelected) {
+                if (isSelected) {
+                    setForeground(table.getSelectionForeground());
+                } else {
                     switch (status) {
-                        case "Finished" -> setForeground(new Color(52, 211, 153));
-                        case "Currently Watching", "Currently Reading", "Currently Consuming" -> setForeground(new Color(96, 165, 250));
-                        default -> setForeground(new Color(251, 191, 36));
+                        case "Finished" -> setForeground(isDarkTheme ? new Color(52, 211, 153) : new Color(5, 150, 105));
+                        case "Currently Watching", "Currently Reading", "Currently Consuming" ->
+                            setForeground(isDarkTheme ? new Color(96, 165, 250) : new Color(37, 99, 235));
+                        default -> setForeground(isDarkTheme ? new Color(251, 191, 36) : new Color(217, 119, 6));
                     }
                 }
                 setFont(getFont().deriveFont(Font.BOLD));
@@ -459,8 +577,12 @@ public class MediaTablePanel extends JPanel {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-                if (!isSelected) {
-                    setForeground("Available".equals(value) ? new Color(96, 165, 250) : new Color(107, 114, 128));
+                if (isSelected) {
+                    setForeground(table.getSelectionForeground());
+                } else {
+                    setForeground("Available".equals(value)
+                        ? (isDarkTheme ? new Color(96, 165, 250) : new Color(37, 99, 235))
+                        : new Color(107, 114, 128));
                 }
                 return this;
             }

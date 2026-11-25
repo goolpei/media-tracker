@@ -7,6 +7,8 @@ import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 import javax.swing.Box;
@@ -22,6 +24,8 @@ import javax.swing.border.MatteBorder;
 public class SidebarPanel extends JPanel {
     private final ButtonGroup navGroup;
     private final JLabel brandLabel;
+    private final List<JToggleButton> navButtons = new ArrayList<>();
+    private boolean isDarkTheme = true;
 
     public SidebarPanel(Consumer<String> onCategorySelected, Runnable onHistorySelected) {
         setLayout(new BorderLayout());
@@ -69,16 +73,22 @@ public class SidebarPanel extends JPanel {
     }
 
     public void applyTheme(boolean isDark) {
+        this.isDarkTheme = isDark;
         setBackground(isDark ? new Color(26, 26, 32) : new Color(243, 244, 246));
         setBorder(new MatteBorder(0, 0, 0, 1, isDark ? new Color(46, 46, 56) : new Color(229, 231, 235)));
         brandLabel.setForeground(isDark ? new Color(129, 140, 248) : new Color(79, 70, 229));
+
+        for (JToggleButton btn : navButtons) {
+            btn.putClientProperty("JButton.buttonType", "borderless");
+            updateNavButtonStyle(btn);
+        }
     }
 
     private JLabel createSectionLabel(String text) {
         JLabel label = new JLabel(text);
         label.setFont(new Font("Segoe UI", Font.BOLD, 11));
         label.setForeground(new Color(107, 114, 128));
-        label.setBorder(new EmptyBorder(0, 8, 0, 0));
+        label.setBorder(new EmptyBorder(0, 12, 0, 0));
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
         return label;
     }
@@ -87,13 +97,33 @@ public class SidebarPanel extends JPanel {
         JToggleButton btn = new JToggleButton(text, selected);
         btn.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         btn.setHorizontalAlignment(SwingConstants.LEFT);
+        btn.setBorder(new EmptyBorder(0, 12, 0, 12));
         btn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         btn.setFocusPainted(false);
+        btn.putClientProperty("JButton.buttonType", "borderless");
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+        btn.addItemListener(e -> updateNavButtonStyle(btn));
         btn.addActionListener(e -> action.run());
+
         navGroup.add(btn);
+        navButtons.add(btn);
+        updateNavButtonStyle(btn);
         return btn;
+    }
+
+    private void updateNavButtonStyle(JToggleButton btn) {
+        if (btn.isSelected()) {
+            btn.setOpaque(true);
+            btn.setBackground(new Color(99, 102, 241));
+            btn.setForeground(Color.WHITE);
+            btn.setFont(btn.getFont().deriveFont(Font.BOLD));
+        } else {
+            btn.setOpaque(false);
+            btn.setBackground(isDarkTheme ? new Color(26, 26, 32) : new Color(243, 244, 246));
+            btn.setForeground(isDarkTheme ? new Color(209, 213, 219) : new Color(55, 65, 81));
+            btn.setFont(btn.getFont().deriveFont(Font.PLAIN));
+        }
     }
 }

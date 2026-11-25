@@ -11,11 +11,13 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.io.File;
 import java.sql.SQLException;
+import java.text.DecimalFormat;
 import java.util.List;
 
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JFileChooser;
+import javax.swing.JFormattedTextField;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -25,6 +27,11 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DefaultFormatterFactory;
+import javax.swing.text.DocumentFilter;
+import javax.swing.text.NumberFormatter;
 
 import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatLightLaf;
@@ -118,7 +125,7 @@ public class MainFrame extends JFrame {
         refreshDashboard();
     }
 
-    public void refreshDashboard() {
+public void refreshDashboard() {
         try {
             List<Media> mediaList = mediaService.getAllMedia();
             mediaTablePanel.setMediaList(mediaList, mediaService::formatMetric);
@@ -128,11 +135,14 @@ public class MainFrame extends JFrame {
             historyPanel.setHistoryLogs(logs);
 
             int total = mediaService.getTotalCount();
+            long unwatched = mediaService.getCountByStatus("Unwatched")
+                           + mediaService.getCountByStatus("Unread")
+                           + mediaService.getCountByStatus("Unconsumed");
             long inProgress = mediaService.getCountByStatus("Currently Watching")
                             + mediaService.getCountByStatus("Currently Reading")
                             + mediaService.getCountByStatus("Currently Consuming");
             long finished = mediaService.getCountByStatus("Finished");
-            statsPanel.updateStats(total, inProgress, finished);
+            statsPanel.updateStats(total, unwatched, inProgress, finished);
 
             mediaTablePanel.updateUndoState(
                 mediaService.canUndo(),
@@ -219,7 +229,7 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private void handleCustomProgress(String id) {
+   private void handleCustomProgress(String id) {
         try {
             Media media = mediaService.getMediaById(id);
             if (media == null) {
@@ -266,6 +276,7 @@ public class MainFrame extends JFrame {
             gbc.weightx = 0.55;
             JSpinner progressSpinner = new JSpinner(new SpinnerNumberModel(Math.min(current, maxAllowed), 0, maxAllowed, 1));
             progressSpinner.setPreferredSize(new Dimension(140, 30));
+            configureIntegerSpinner(progressSpinner);
             content.add(progressSpinner, gbc);
 
             // Quick-increment helper buttons inside the modal
@@ -275,14 +286,14 @@ public class MainFrame extends JFrame {
             JButton add10Btn = new JButton("+10");
             add10Btn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
             add10Btn.addActionListener(e -> {
-                int val = ((Number) progressSpinner.getValue()).intValue();
+                int val = readSpinnerInt(progressSpinner);
                 progressSpinner.setValue(Math.min(maxAllowed, val + 10));
             });
 
             JButton add30Btn = new JButton("+30");
             add30Btn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
             add30Btn.addActionListener(e -> {
-                int val = ((Number) progressSpinner.getValue()).intValue();
+                int val = readSpinnerInt(progressSpinner);
                 progressSpinner.setValue(Math.min(maxAllowed, val + 30));
             });
 
@@ -305,7 +316,7 @@ public class MainFrame extends JFrame {
             previewLabel.setFont(new Font("Segoe UI", Font.ITALIC, 11));
             previewLabel.setForeground(new Color(16, 185, 129));
             Runnable updatePreview = () -> {
-                int val = ((Number) progressSpinner.getValue()).intValue();
+                int val = readSpinnerInt(progressSpinner);
                 if (boundary > 0 && val >= boundary) {
                     previewLabel.setText("Will reach boundary (" + val + " / " + boundary + " " + unit + ") -> Finished");
                 } else if (boundary > 0) {
@@ -332,7 +343,7 @@ public class MainFrame extends JFrame {
             applyBtn.setForeground(Color.WHITE);
             applyBtn.addActionListener(e -> {
                 try {
-                    int chosenValue = ((Number) progressSpinner.getValue()).intValue();
+                    int chosenValue = readSpinnerInt(progressSpinner);
                     mediaService.setCustomProgress(id, chosenValue);
                     dialog.dispose();
                     refreshDashboard();
@@ -351,6 +362,54 @@ public class MainFrame extends JFrame {
         } catch (SQLException e) {
             showError("Database Error", "Could not load media item: " + e.getMessage());
         }
+    }
+
+private static void configureIntegerSpinner(JSpinner spinner) {
+        DecimalFormat format = new DecimalFormat("0");
+        format.setGroupingUsed(false);
+
+        DocumentFilter integerFilter = new DocumentFilter() {
+            @Override
+            public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
+                if (string == null) return;
+                String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String next = current.substring(0, offset) + string + current.substring(offset);
+                if (next.matches("^\\d*$")) {
+                    super.insertString(fb, offset, string, attr);
+                }
+            }
+
+            @Override
+            public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException {
+                String replacement = text == null ? "" : text;
+                String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String next = current.substring(0, offset) + replacement + current.substring(offset + length);
+                if (next.matches("^\\d*$")) {
+                    super.replace(fb, offset, length, text, attrs);
+                }
+            }
+        };
+
+        NumberFormatter formatter = new NumberFormatter(format) {
+            @Override
+            protected DocumentFilter getDocumentFilter() {
+                return integerFilter;
+            }
+        };
+        formatter.setValueClass(Integer.class);
+        formatter.setAllowsInvalid(true);
+
+        JSpinner.DefaultEditor editor = (JSpinner.DefaultEditor) spinner.getEditor();
+        JFormattedTextField textField = editor.getTextField();
+        textField.setFormatterFactory(new DefaultFormatterFactory(formatter));
+    }
+
+    private static int readSpinnerInt(JSpinner spinner) {
+        String raw = ((JSpinner.DefaultEditor) spinner.getEditor())
+                .getTextField()
+                .getText()
+                .trim();
+        return raw.isEmpty() ? 0 : Integer.parseInt(raw);
     }
 
     private void handleDeleteMedia(List<String> ids) {
