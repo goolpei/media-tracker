@@ -2,6 +2,7 @@ package com.mediatracker.ui.dialogs;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -31,6 +32,7 @@ import javax.swing.text.DefaultFormatterFactory;
 import javax.swing.text.DocumentFilter;
 import javax.swing.text.NumberFormatter;
 
+import com.mediatracker.exceptions.InvalidMediaException;
 import com.mediatracker.models.Anime;
 import com.mediatracker.models.Book;
 import com.mediatracker.models.Manga;
@@ -312,11 +314,11 @@ public class MediaFormDialog extends JDialog {
         try {
             parsed = Double.parseDouble(rawText);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Rating must be a valid number.");
+            throw new InvalidMediaException("Rating must be a valid number.", e);
         }
 
         if (parsed < 0.0 || parsed > 10.0) {
-            throw new IllegalArgumentException("Rating must be between 0.0 and 10.0.");
+            throw new InvalidMediaException("Rating must be between 0.0 and 10.0.");
         }
 
         return parsed;
@@ -336,22 +338,23 @@ public class MediaFormDialog extends JDialog {
         try {
             parsed = Integer.parseInt(rawText);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Total metric count must be a valid whole number.");
+            throw new InvalidMediaException("Total metric count must be a valid whole number.", e);
         }
 
         if (parsed < 0) {
-            throw new IllegalArgumentException("Total metric count cannot be negative.");
+            throw new InvalidMediaException("Total metric count cannot be negative.");
         }
 
         return parsed;
     }
 
     private void handleSave() {
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
         try {
             String id = idField.getText().trim();
             String type = (String) typeCombo.getSelectedItem();
             if (type == null || SELECT_TYPE_PROMPT.equals(type)) {
-                throw new IllegalArgumentException("Please select a Media Type first.");
+                throw new InvalidMediaException("Please select a Media Type first.");
             }
 
             String title = titleField.getText().trim();
@@ -385,7 +388,7 @@ public class MediaFormDialog extends JDialog {
                 case "Book" -> new Book(id, title, genre, rating, status, link, currentProgress, boundary);
                 case "Manga" -> new Manga(id, title, genre, rating, status, link, currentProgress, boundary);
                 case "Manhwa" -> new Manhwa(id, title, genre, rating, status, link, currentProgress, boundary);
-                default -> throw new IllegalArgumentException("Unsupported media type.");
+                default -> throw new InvalidMediaException("Unsupported media type.");
             };
 
             if (existingMedia == null) {
@@ -396,13 +399,22 @@ public class MediaFormDialog extends JDialog {
 
             saved = true;
             dispose();
-        } catch (Exception ex) {
+        } catch (InvalidMediaException ex) {
             JOptionPane.showMessageDialog(
                 this,
                 ex.getMessage(),
                 "Validation Error",
                 JOptionPane.WARNING_MESSAGE
             );
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(
+                this,
+                "Failed to save media: " + ex.getMessage(),
+                "Error",
+                JOptionPane.ERROR_MESSAGE
+            );
+        } finally {
+            setCursor(Cursor.getDefaultCursor());
         }
     }
 

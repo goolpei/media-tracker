@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 
 import com.mediatracker.database.HistoryDAO;
 import com.mediatracker.database.MediaDAO;
+import com.mediatracker.exceptions.InvalidMediaException;
 import com.mediatracker.models.Anime;
 import com.mediatracker.models.Book;
 import com.mediatracker.models.HistoryLog;
@@ -129,16 +130,16 @@ public class MediaService {
         return String.format("%c%02d", nextLetter, nextNumber);
     }
 
-    public void addMedia(Media media) throws SQLException {
+public void addMedia(Media media) throws SQLException {
         if (media == null) {
-            throw new IllegalArgumentException("Media object cannot be null.");
+            throw new InvalidMediaException("Media object cannot be null.");
         }
 
         media.setId(generateNextId());
         validateMedia(media);
 
         if (mediaDAO.findById(media.getId()) != null) {
-            throw new IllegalArgumentException("Media ID '" + media.getId() + "' already exists.");
+            throw new InvalidMediaException("Media ID '" + media.getId() + "' already exists.");
         }
 
         mediaDAO.insert(media);
@@ -235,19 +236,19 @@ public void updateMedia(Media updatedMedia) throws SQLException {
         return new int[]{updatedCount, skippedFinishedCount};
     }
 
-    public void setCustomProgress(String id, int newProgress) throws SQLException {
+   public void setCustomProgress(String id, int newProgress) throws SQLException {
         Media media = mediaDAO.findById(id);
         if (media == null) {
-            throw new IllegalArgumentException("Media item not found.");
+            throw new InvalidMediaException("Media item not found.");
         }
 
         if (newProgress < 0) {
-            throw new IllegalArgumentException("Progress cannot be negative.");
+            throw new InvalidMediaException("Progress cannot be negative.");
         }
 
         int boundary = media.getBoundary();
         if (boundary > 0 && newProgress > boundary) {
-            throw new IllegalArgumentException(
+            throw new InvalidMediaException(
                 "Progress (" + newProgress + ") cannot exceed the boundary (" + boundary + ")."
             );
         }
@@ -276,10 +277,10 @@ public void updateMedia(Media updatedMedia) throws SQLException {
     public void launchMedia(String id) throws SQLException {
         Media media = mediaDAO.findById(id);
         if (media == null) {
-            throw new IllegalArgumentException("Media item not found.");
+            throw new InvalidMediaException("Media item not found.");
         }
         if (media.getSourceLink() == null || media.getSourceLink().trim().isEmpty()) {
-            throw new IllegalArgumentException("No source link saved for '" + media.getTitle() + "'.");
+            throw new InvalidMediaException("No source link saved for '" + media.getTitle() + "'.");
         }
 
         media.consume();
@@ -423,19 +424,19 @@ public void updateMedia(Media updatedMedia) throws SQLException {
 
     private void validateMedia(Media media) {
         if (media == null) {
-            throw new IllegalArgumentException("Media object cannot be null.");
+            throw new InvalidMediaException("Media object cannot be null.");
         }
         if (media.getId() == null || media.getId().trim().isEmpty()) {
-            throw new IllegalArgumentException("Media ID is required.");
+            throw new InvalidMediaException("Media ID is required.");
         }
         if (media.getTitle() == null || media.getTitle().trim().isEmpty()) {
-            throw new IllegalArgumentException("Title is required.");
+            throw new InvalidMediaException("Title is required.");
         }
         if (media.getRating() < 0.0 || media.getRating() > 10.0) {
-            throw new IllegalArgumentException("Rating must be between 0.0 and 10.0.");
+            throw new InvalidMediaException("Rating must be between 0.0 and 10.0.");
         }
         if (media.getCurrentProgress() < 0 || media.getBoundary() < 0) {
-            throw new IllegalArgumentException("Progress and boundary counts cannot be negative.");
+            throw new InvalidMediaException("Progress and boundary counts cannot be negative.");
         }
     }
 
